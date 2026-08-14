@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citizen Call Intelligence — Demo Dashboard</title>
+    <meta name="description" content="A client-side tool to analyze helpline recordings and extract structured data using the Gemini API.">
+    <!-- Google Fonts: Outfit for headings, Inter for body -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glow-bg"></div>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <span class="logo-icon">🎙️</span>
+                <h1>Citizen Call Intelligence</h1>
+                <span class="badge">Demo Dashboard</span>
+            </div>
+            <p class="subtitle">Extracting structured actionable intelligence from citizen helpline call recordings using gemini-2.5-flash.</p>
+        </header>
+
+        <!-- Main Content Grid -->
+        <main class="dashboard-grid">
+            <!-- Left Panel: Configuration & Upload -->
+            <section class="control-panel glass-card">
+                <h2>Configuration & Input</h2>
+                
+                <!-- API Key Section -->
+                <div class="input-group">
+                    <label for="apiKey">Gemini API Key</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="apiKey" placeholder="Enter your Gemini API Key" value="">
+                        <button type="button" id="toggleKeyBtn" aria-label="Toggle API Key visibility">
+                            <svg class="eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
+                    </div>
+                    <span class="help-text">Your key is stored only in memory for this session and is sent directly to Google.</span>
+                </div>
+
+                <!-- File Upload Section -->
+                <div class="upload-group">
+                    <label>Helpline Recording</label>
+                    <div id="dropzone" class="dropzone">
+                        <input type="file" id="audioFile" accept="audio/mp3, audio/wav, audio/m4a, audio/ogg, audio/mpeg, audio/x-m4a, audio/x-wav">
+                        <div class="dropzone-content">
+                            <span class="upload-icon">📤</span>
+                            <p class="primary-text">Drag & drop your recording here</p>
+                            <p class="secondary-text">Supports MP3, WAV, M4A, OGG</p>
+                            <button type="button" class="btn-secondary" id="browseBtn">Browse Files</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Selected File Info -->
+                    <div id="fileInfo" class="file-info hidden">
+                        <div class="file-details">
+                            <span class="file-icon">🎵</span>
+                            <div>
+                                <p id="fileName" class="file-name">recording.mp3</p>
+                                <p id="fileSize" class="file-size">2.4 MB</p>
+                            </div>
+                        </div>
+                        <button type="button" id="removeFileBtn" class="btn-icon" aria-label="Remove file">✕</button>
+                    </div>
+                </div>
+
+                <!-- Call Audio Player -->
+                <div id="playerContainer" class="player-container hidden">
+                    <label>Audio Preview</label>
+                    <audio id="audioPlayer" controls></audio>
+                </div>
+
+                <!-- Action Button -->
+                <button type="button" id="analyzeBtn" class="btn-primary" disabled>
+                    <span class="btn-text">Analyze Call</span>
+                    <span class="spinner hidden"></span>
+                </button>
+
+                <!-- Warning Notice -->
+                <div class="alert-notice">
+                    <span class="alert-icon">⚠️</span>
+                    <p class="alert-text">Demo only — do not use this pattern with a real API key in production; move the API call server-side before deploying.</p>
+                </div>
+            </section>
+
+            <!-- Right Panel: Results / Dashboard -->
+            <section class="results-panel glass-card">
+                <h2>Analysis Results</h2>
+                
+                <!-- Empty/Placeholder State -->
+                <div id="placeholderState" class="placeholder-state">
+                    <span class="placeholder-icon">📊</span>
+                    <h3>No Analysis Run Yet</h3>
+                    <p>Provide your Gemini API Key, upload an audio recording, and click "Analyze Call" to extract structured details.</p>
+                </div>
+
+                <!-- Loading State -->
+                <div id="loadingState" class="loading-state hidden">
+                    <div class="loader-ring">
+                        <div></div><div></div><div></div><div></div>
+                    </div>
+                    <h3>Processing Audio...</h3>
+                    <p>Gemini is transcribing, interpreting context, and structuring parameters.</p>
+                    <div class="loading-steps">
+                        <div class="step active" id="step-upload">1. Loading Audio File</div>
+                        <div class="step" id="step-api">2. Sending payload to Gemini API</div>
+                        <div class="step" id="step-render">3. Building analytics dashboard</div>
+                    </div>
+                </div>
+
+                <!-- Dashboard Content (hidden by default) -->
+                <div id="dashboardContent" class="dashboard-content hidden">
+                    <!-- Top Summary Bar -->
+                    <div class="summary-cards">
+                        <div class="metric-card urgent" id="emergencyCard">
+                            <span class="metric-icon">🚨</span>
+                            <div>
+                                <h4>Emergency Status</h4>
+                                <p id="val-emergency">No</p>
+                            </div>
+                        </div>
+                        <div class="metric-card" id="priorityCard">
+                            <span class="metric-icon">⚡</span>
+                            <div>
+                                <h4>Priority Level</h4>
+                                <p id="val-priority">Medium</p>
+                            </div>
+                        </div>
+                        <div class="metric-card" id="reviewCard">
+                            <span class="metric-icon">🔍</span>
+                            <div>
+                                <h4>Needs Manual Review</h4>
+                                <p id="val-review">No</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main Grid for Structured Cards -->
+                    <div class="cards-grid">
+                        <!-- Call Info & Transcript Summary -->
+                        <div class="data-card colspan-2">
+                            <h3>
+                                <span class="card-icon">📝</span>
+                                Complaint Description Summary
+                            </h3>
+                            <div class="card-body">
+                                <p id="val-description" class="description-text">No summary details available.</p>
+                            </div>
+                        </div>
+
+                        <!-- Caller Details -->
+                        <div class="data-card">
+                            <h3>
+                                <span class="card-icon">👤</span>
+                                Caller Profile
+                            </h3>
+                            <div class="card-body list-info">
+                                <div class="info-row">
+                                    <span class="info-label">Name</span>
+                                    <span class="info-value" id="val-name">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Age</span>
+                                    <span class="info-value" id="val-age">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Location & Scope -->
+                        <div class="data-card">
+                            <h3>
+                                <span class="card-icon">📍</span>
+                                Location & Scope
+                            </h3>
+                            <div class="card-body list-info">
+                                <div class="info-row">
+                                    <span class="info-label">Incident Location</span>
+                                    <span class="info-value" id="val-location">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Confidence</span>
+                                    <span class="info-value badge-light" id="val-loc-confidence">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Affected Scope</span>
+                                    <span class="info-value" id="val-scope">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">People Affected</span>
+                                    <span class="info-value" id="val-people-affected">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Routing & Category -->
+                        <div class="data-card">
+                            <h3>
+                                <span class="card-icon">🏢</span>
+                                Routing Details
+                            </h3>
+                            <div class="card-body list-info">
+                                <div class="info-row">
+                                    <span class="info-label">Sector Domain</span>
+                                    <span class="info-value text-highlight" id="val-sector">-</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Recommended Department</span>
+                                    <span class="info-value" id="val-department">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sentiment Analysis -->
+                        <div class="data-card">
+                            <h3>
+                                <span class="card-icon">🎭</span>
+                                Sentiment & Tone
+                            </h3>
+                            <div class="card-body sentiment-body">
+                                <div class="sentiment-meter">
+                                    <div class="sentiment-bar" id="sentimentBar"></div>
+                                    <div class="sentiment-labels">
+                                        <span data-val="1">Neutral</span>
+                                        <span data-val="2">Happy</span>
+                                        <span data-val="3">Sad</span>
+                                        <span data-val="4">Angry</span>
+                                        <span data-val="5">Fearful</span>
+                                    </div>
+                                </div>
+                                <div class="sentiment-score">
+                                    <span class="score-number" id="val-sentiment-num">1</span>
+                                    <span class="score-text" id="val-sentiment-text">Neutral</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- JSON Inspector Toggle -->
+                    <div class="raw-data-section">
+                        <button type="button" id="toggleRawBtn" class="btn-text">
+                            <span>Show Raw API Response JSON</span>
+                            <span class="arrow">▼</span>
+                        </button>
+                        <div id="rawJsonContainer" class="raw-json-container hidden">
+                            <button type="button" id="copyJsonBtn" class="btn-secondary btn-small">Copy JSON</button>
+                            <pre><code id="rawJsonOutput"></code></pre>
+                        </div>
+                    </div>
+
+                    <!-- Disclosing Statement -->
+                    <footer class="results-footer">
+                        <p>All fields are extracted directly from the audio. Unstated details are shown as 'not mentioned' rather than guessed.</p>
+                    </footer>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js?v=2"></script>
+</body>
+</html>
