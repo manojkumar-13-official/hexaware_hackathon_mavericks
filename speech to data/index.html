@@ -8,8 +8,12 @@
     <!-- Google Fonts: Outfit for headings, Inter for body -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS and JS for Heatmap -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
     <div class="glow-bg"></div>
@@ -24,8 +28,18 @@
             <p class="subtitle">Extracting structured actionable intelligence from citizen helpline call recordings using gemini-2.5-flash.</p>
         </header>
 
-        <!-- Main Content Grid -->
-        <main class="dashboard-grid">
+        <!-- Navigation Tabs -->
+        <nav class="app-tabs">
+            <button type="button" class="tab-btn active" data-tab="upload">🎙️ Single Upload</button>
+            <button type="button" class="tab-btn" data-tab="dashboard">📊 Official Dashboard</button>
+            <button type="button" class="tab-btn" data-tab="review">🔍 Review Queue <span class="badge-count" id="reviewCountBadge" style="display:none;">0</span></button>
+        </nav>
+
+        <div class="tab-contents">
+            <!-- Tab 1: Upload & Analyzer -->
+            <div id="tab-upload" class="tab-pane active">
+                <!-- Main Content Grid -->
+                <main class="dashboard-grid">
             <!-- Left Panel: Configuration & Upload -->
             <section class="control-panel glass-card">
                 <h2>Configuration & Input</h2>
@@ -261,8 +275,82 @@
                 </div>
             </section>
         </main>
+    </div> <!-- Close tab-upload -->
+
+    <!-- Tab 2: Dashboard & Heatmap -->
+    <div id="tab-dashboard" class="tab-pane hidden">
+        <div class="dashboard-controls-strip">
+            <div class="metrics-strip">
+                <div class="metric-mini-card">
+                    <span class="metric-mini-val" id="metric-total-tickets">0</span>
+                    <span class="metric-mini-label">Total Submissions</span>
+                </div>
+                <div class="metric-mini-card">
+                    <span class="metric-mini-val text-alert" id="metric-open-tickets">0</span>
+                    <span class="metric-mini-label">Active / Open</span>
+                </div>
+                <div class="metric-mini-card">
+                    <span class="metric-mini-val text-warning" id="metric-review-tickets">0</span>
+                    <span class="metric-mini-label">Pending Review</span>
+                </div>
+            </div>
+
+            <div class="filters-panel">
+                <div class="filter-group">
+                    <label for="filterSector">Sector Domain</label>
+                    <select id="filterSector">
+                        <option value="All">All Sectors</option>
+                        <option value="Water Supply">Water Supply</option>
+                        <option value="Electricity">Electricity</option>
+                        <option value="Roads & Infrastructure">Roads & Infrastructure</option>
+                        <option value="Public Health">Public Health</option>
+                        <option value="Police / Law & Order">Police / Law & Order</option>
+                        <option value="Transport">Transport</option>
+                        <option value="Sanitation & Waste Management">Sanitation & Waste Management</option>
+                        <option value="Disaster Management">Disaster Management</option>
+                        <option value="Municipal Administration">Municipal Administration</option>
+                        <option value="Other / Unclear">Other / Unclear</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="filterTime">Time Window</label>
+                    <select id="filterTime">
+                        <option value="Last 7 Days">Last 7 Days</option>
+                        <option value="Last 14 Days">Last 14 Days</option>
+                        <option value="Last 30 Days" selected>Last 30 Days</option>
+                        <option value="All Time">All Time</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-card map-card">
+            <div class="card-header-with-actions">
+                <h3>📍 Chennai Municipal Call Intelligence Heatmap</h3>
+                <span class="help-text">Shows geocoded complaints (grouped by Ward centroids)</span>
+            </div>
+            <div id="heatmapMap" style="height: 520px; border-radius: 8px; margin-top: 12px; z-index: 1;"></div>
+        </div>
     </div>
 
-    <script src="app.js?v=2"></script>
+    <!-- Tab 3: Review Queue -->
+    <div id="tab-review" class="tab-pane hidden">
+        <div class="review-queue-header">
+            <h2>🔍 Complaint Review & Moderation Queue</h2>
+            <p class="subtitle">Resolve location ambiguities and action duplicates flagged by RAG vector similarity.</p>
+        </div>
+
+        <div id="reviewQueueList" class="review-queue-list">
+            <div class="placeholder-state card-empty">
+                <span class="placeholder-icon">🎉</span>
+                <h3>Review Queue is Empty</h3>
+                <p>No complaints require manual verification or duplicate resolution at this time.</p>
+            </div>
+        </div>
+    </div>
+</div> <!-- Close tab-contents -->
+</div> <!-- Close app-container -->
+
+    <script src="app.js?v=3"></script>
 </body>
 </html>

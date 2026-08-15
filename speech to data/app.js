@@ -272,6 +272,16 @@ async function analyzeCallRecording() {
         apiResponseData = responseData;
         setLoadingState(false);
         showDashboard(true);
+
+        // Save to Database (Section 13.2) — runs after UI is already shown so it
+        // doesn't block or delay the analysis result render.
+        try {
+            const savedDoc = await saveTicketToDatabase(responseData, apiKey);
+            renderSaveStatus(savedDoc);
+        } catch (dbErr) {
+            console.error("Failed to save ticket to MongoDB database:", dbErr);
+            renderSaveStatus(null, dbErr.message);
+        }
     } catch (error) {
         console.error('Analysis failed:', error);
         alert(`Analysis Error: ${error.message || 'An unexpected error occurred.'}`);
@@ -503,4 +513,483 @@ function formatBytes(bytes, decimals = 2) {
 document.addEventListener('DOMContentLoaded', () => {
     initEvents();
     checkValidation();
+    initTabs();
+    initFilters();
+    loadDashboardMetrics();
 });
+
+// ==========================================
+// PART 2 — Additive Backend Integration Functions
+// ==========================================
+
+async function saveTicketToDatabase(ticketData, apiKey) {
+    const response = await fetch('/api/tickets', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey
+        },
+        body: JSON.stringify(ticketData)
+    });
+    if (!response.ok) {
+        const errText = await response.text().catch(() => response.statusText);
+        throw new Error(`Failed to save to DB (${response.status}): ${errText}`);
+    }
+    const savedDoc = await response.json();
+    console.log("Successfully saved ticket to database:", savedDoc);
+    loadDashboardMetrics();
+    return savedDoc; // Return so the caller can render save-status feedback
+}
+
+// Render a non-intrusive save-status card below the raw JSON inspector
+function renderSaveStatus(doc, errorMsg) {
+    // Remove any previous save status card first
+    const existing = document.getElementById('saveStatusCard');
+    if (existing) existing.remove();
+
+    const card = document.createElement('div');
+    card.id = 'saveStatusCard';
+    card.className = 'save-status-card';
+
+    if (errorMsg || !doc) {
+        card.classList.add('save-status-error');
+        card.innerHTML = `
+            <div class="save-status-header">
+                <span class="save-status-label">⚠ Save Failed — Backend Unavailable</span>
+            </div>
+            <div class="save-status-meta">
+                <span>${escapeHTML(errorMsg || 'Could not reach the backend server.')}</span>
+                <span class="save-status-hint">Start <code>node server.js</code> and refresh to enable ticket storage.</span>
+            </div>
+        `;
+    } else {
+        const dupStatus = doc.duplicate_check?.review_status || 'unique';
+        const ward = doc.ward_normalized || 'Unmatched';
+        const matchType = doc.ward_match_type || 'unmatched';
+        const ticketId = doc.ticket_id || '—';
+
+        const statusConfig = {
+            unique:         { icon: '✓', label: 'Unique — New Ticket Filed',          cls: 'save-status-unique' },
+            auto_duplicate: { icon: '⟳', label: 'Auto-Duplicate Merged',              cls: 'save-status-duplicate' },
+            needs_review:   { icon: '⚑', label: 'Needs Review — Borderline Duplicate', cls: 'save-status-review' }
+        };
+        const cfg = statusConfig[dupStatus] || statusConfig.unique;
+        card.classList.add(cfg.cls);
+
+        const dupExtra = dupStatus === 'auto_duplicate'
+            ? `<span>Merged into: <code>${escapeHTML(doc.duplicate_check?.duplicate_of_ticket_id || '—')}</code></span>`
+            : dupStatus === 'needs_review'
+            ? `<span class="save-status-hint">→ Check the Review Queue tab to confirm or reject</span>`
+            : '';
+
+        card.innerHTML = `
+            <div class="save-status-header">
+                <span class="save-status-label">${cfg.icon} ${cfg.label}</span>
+                <span class="save-status-id">ID: <code>${escapeHTML(ticketId)}</code></span>
+            </div>
+            <div class="save-status-meta">
+                <span>📍 Ward: <strong>${escapeHTML(ward)}</strong></span>
+                <span>Match: <strong>${escapeHTML(matchType)}</strong></span>
+                ${dupExtra}
+            </div>
+        `;
+    }
+
+    // Insert after the raw JSON section (or append to dashboardContent as fallback)
+    const rawSection = document.querySelector('#dashboardContent .raw-data-section');
+    if (rawSection && rawSection.parentNode) {
+        rawSection.after(card);
+    } else {
+        dashboardContent.appendChild(card);
+    }
+}
+
+function initTabs() {
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabPanes = document.querySelectorAll('.tab-pane');
+
+    tabButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.getAttribute('data-tab');
+
+            // Set buttons active
+            tabButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            // Set panes active
+            tabPanes.forEach(pane => {
+                if (pane.id === `tab-${targetTab}`) {
+                    pane.classList.remove('hidden');
+                    pane.classList.add('active');
+                } else {
+                    pane.classList.add('hidden');
+                    pane.classList.remove('active');
+                }
+            });
+
+            // Trigger specific page loads
+            if (targetTab === 'dashboard') {
+                loadDashboardMetrics();
+                loadHeatmapData();
+            } else if (targetTab === 'review') {
+                loadReviewQueue();
+            }
+        });
+    });
+}
+
+let map = null;
+let heatmapLayer = null;
+
+// Initialises the Leaflet map exactly once. Returns true if the map is ready
+// to use (already existed or was just created), false if the container is missing.
+function initHeatmapMap() {
+    if (map) return true; // Already initialised — idempotent
+
+    const mapContainer = document.getElementById('heatmapMap');
+    if (!mapContainer) return false;
+
+    // Center on Chennai centroid
+    map = L.map('heatmapMap').setView([13.04, 80.24], 11);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20
+    }).addTo(map);
+
+    return true;
+    // NOTE: invalidateSize is called inside loadHeatmapData every time data is
+    // loaded, which happens on every dashboard tab switch — no separate listener needed.
+}
+
+async function loadHeatmapData() {
+    // Ensure map is initialised before doing anything; bail if container is missing.
+    if (!initHeatmapMap()) return;
+
+    // Always call invalidateSize after a tab-show: Leaflet can't measure the
+    // container's dimensions while it is display:none, so tiles / zoom may be
+    // wrong until we tell it to recalculate.
+    setTimeout(() => { if (map) map.invalidateSize(); }, 120);
+
+    const sector = document.getElementById('filterSector').value;
+    const timeRange = document.getElementById('filterTime').value;
+
+    try {
+        const res = await fetch(`/api/heatmap?sector=${encodeURIComponent(sector)}&timeRange=${encodeURIComponent(timeRange)}`);
+        if (!res.ok) throw new Error(`Heatmap fetch failed: ${res.status} ${res.statusText}`);
+        const data = await res.json();
+
+        // Remove old heatmap layer before re-drawing
+        if (heatmapLayer) {
+            map.removeLayer(heatmapLayer);
+            heatmapLayer = null;
+        }
+
+        // Format: [lat, lng, weight]
+        const points = data.map(item => [item.lat, item.lng, item.weight * 5]);
+
+        if (points.length === 0) {
+            setMapEmptyState(true);
+            return;
+        }
+
+        setMapEmptyState(false);
+
+        // Add Leaflet Heat layer
+        heatmapLayer = L.heatLayer(points, {
+            radius: 25,
+            blur: 15,
+            maxZoom: 13,
+            gradient: {
+                0.2: 'blue',
+                0.4: 'cyan',
+                0.6: 'lime',
+                0.8: 'yellow',
+                1.0: 'red'
+            }
+        }).addTo(map);
+
+    } catch (err) {
+        console.error("Error loading heatmap data:", err);
+        setMapEmptyState(true, '⚠ Could not load heatmap data. Is the backend server running?');
+    }
+}
+
+// Shows or hides an overlay message on top of the heatmap for empty/error states.
+function setMapEmptyState(show, customMsg) {
+    const mapEl = document.getElementById('heatmapMap');
+    if (!mapEl) return;
+
+    let overlay = document.getElementById('mapEmptyOverlay');
+
+    if (show) {
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'mapEmptyOverlay';
+            overlay.className = 'map-empty-overlay';
+            mapEl.appendChild(overlay);
+        }
+        overlay.innerHTML = `
+            <span class="map-empty-icon">🗺️</span>
+            <p>${escapeHTML(customMsg || 'No geocoded complaints match the current filters.')}<br>
+            <small>Submit and analyse calls to begin building the heatmap.</small></p>
+        `;
+        overlay.style.display = 'flex';
+    } else {
+        if (overlay) overlay.style.display = 'none';
+    }
+}
+
+function initFilters() {
+    const filterSector = document.getElementById('filterSector');
+    const filterTime = document.getElementById('filterTime');
+
+    if (filterSector) {
+        filterSector.addEventListener('change', loadHeatmapData);
+    }
+    if (filterTime) {
+        filterTime.addEventListener('change', loadHeatmapData);
+    }
+}
+
+async function loadDashboardMetrics() {
+    try {
+        const res = await fetch('/api/metrics');
+        if (!res.ok) throw new Error("Failed to fetch metrics");
+        const data = await res.json();
+
+        document.getElementById('metric-total-tickets').textContent = data.total;
+        document.getElementById('metric-open-tickets').textContent = data.open;
+        document.getElementById('metric-review-tickets').textContent = data.needsReview;
+
+        // Update badge count in Tab bar
+        const badge = document.getElementById('reviewCountBadge');
+        if (badge) {
+            if (data.needsReview > 0) {
+                badge.textContent = data.needsReview;
+                badge.style.display = 'inline-flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    } catch (err) {
+        console.error("Error loading metrics:", err);
+    }
+}
+
+let staticWardsList = [];
+
+async function fetchStaticWards() {
+    if (staticWardsList.length > 0) return staticWardsList;
+    try {
+        const res = await fetch('/api/wards');
+        if (res.ok) {
+            staticWardsList = await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to load wards dropdown list:", e);
+    }
+    return staticWardsList;
+}
+
+async function loadReviewQueue() {
+    const listContainer = document.getElementById('reviewQueueList');
+    if (!listContainer) return;
+
+    listContainer.innerHTML = '<div class="loading-state"><h3>Loading Review Queue...</h3></div>';
+
+    try {
+        const wards = await fetchStaticWards();
+        const res = await fetch('/api/review-queue');
+        if (!res.ok) throw new Error("Failed to fetch review queue");
+        const queueItems = await res.json();
+
+        if (queueItems.length === 0) {
+            listContainer.innerHTML = `
+                <div class="placeholder-state card-empty">
+                    <span class="placeholder-icon">🎉</span>
+                    <h3>Review Queue is Empty</h3>
+                    <p>No complaints require manual verification or duplicate resolution at this time.</p>
+                </div>
+            `;
+            return;
+        }
+
+        listContainer.innerHTML = '';
+
+        queueItems.forEach(item => {
+            const ticket = item.ticket;
+            const original = item.originalMatch;
+
+            const card = document.createElement('div');
+            card.className = 'review-card glass-card';
+
+            const createdDate = new Date(ticket.created_at).toLocaleString();
+
+            if (ticket.duplicate_check && ticket.duplicate_check.review_status === 'needs_review' && original) {
+                const simPercent = Math.round(ticket.duplicate_check.similarity_score * 100);
+                const llmSuggestion = ticket.duplicate_check.llm_review_suggestion || null;
+                
+                let suggestionHtml = '';
+                if (llmSuggestion === 'yes') {
+                    suggestionHtml = `<div class="badge-suggestion positive">🤖 Gemini AI matches this as same issue</div>`;
+                } else if (llmSuggestion === 'no') {
+                    suggestionHtml = `<div class="badge-suggestion negative">🤖 Gemini AI suspects different issue</div>`;
+                }
+
+                card.innerHTML = `
+                    <div class="review-card-header">
+                        <span class="badge warning">Potential Duplicate — ${simPercent}% Semantic Match</span>
+                        <span class="review-date">${createdDate}</span>
+                    </div>
+                    
+                    <div class="side-by-side-layout">
+                        <div class="comparison-column new-ticket">
+                            <h4>Incoming Complaint (Unreviewed)</h4>
+                            <p class="desc-box">${escapeHTML(ticket.description)}</p>
+                            <div class="meta-strip">
+                                <span><strong>Sector:</strong> ${escapeHTML(ticket.sector)}</span>
+                                <span><strong>Ward:</strong> ${escapeHTML(ticket.ward_normalized)}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="comparison-column original-ticket">
+                            <h4>Existing Complaint (SLA Active)</h4>
+                            <p class="desc-box">${escapeHTML(original.description)}</p>
+                            <div class="meta-strip">
+                                <span><strong>Sector:</strong> ${escapeHTML(original.sector)}</span>
+                                <span><strong>Ward:</strong> ${escapeHTML(original.ward_normalized)}</span>
+                                <span><strong>Status:</strong> ${escapeHTML(original.status)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${suggestionHtml}
+
+                    <div class="review-actions">
+                        <button type="button" class="btn-primary btn-confirm-dup" data-id="${ticket.ticket_id}">Confirm Duplicate</button>
+                        <button type="button" class="btn-secondary btn-reject-dup" data-id="${ticket.ticket_id}">Mark as Unique</button>
+                    </div>
+                `;
+
+                card.querySelector('.btn-confirm-dup').addEventListener('click', () => resolveDuplicate(ticket.ticket_id, 'confirm'));
+                card.querySelector('.btn-reject-dup').addEventListener('click', () => resolveDuplicate(ticket.ticket_id, 'reject'));
+
+            } else if (ticket.needs_manual_review) {
+                let wardOptions = `<option value="">-- Select Ward --</option>`;
+                wards.forEach(w => {
+                    const selected = ticket.ward_normalized === w.ward_name ? 'selected' : '';
+                    wardOptions += `<option value="${w.ward_name}" ${selected}>${w.ward_name} (${w.zone})</option>`;
+                });
+
+                const sectorsList = [
+                    "Water Supply", "Electricity", "Roads & Infrastructure", "Public Health",
+                    "Police / Law & Order", "Transport", "Sanitation & Waste Management",
+                    "Disaster Management", "Municipal Administration", "Other / Unclear"
+                ];
+
+                let sectorOptions = '';
+                sectorsList.forEach(sec => {
+                    const selected = ticket.sector === sec ? 'selected' : '';
+                    sectorOptions += `<option value="${sec}" ${selected}>${sec}</option>`;
+                });
+
+                card.innerHTML = `
+                    <div class="review-card-header">
+                        <span class="badge info">Needs Location/Sector Normalization</span>
+                        <span class="review-date">${createdDate}</span>
+                    </div>
+                    
+                    <div class="manual-review-layout">
+                        <div class="manual-info-col">
+                            <h4>Complaint Description</h4>
+                            <p class="desc-box">${escapeHTML(ticket.description)}</p>
+                            <div class="extracted-details">
+                                <p><strong>AI Extracted Location:</strong> <code>${escapeHTML(ticket.location || 'Not Mentioned')}</code> (Confidence: ${escapeHTML(ticket.location_confidence)})</p>
+                                <p><strong>AI Extracted Sector:</strong> <code>${escapeHTML(ticket.sector)}</code></p>
+                            </div>
+                        </div>
+                        
+                        <div class="manual-form-col">
+                            <h4>Standardization Fields</h4>
+                            <div class="form-group">
+                                <label>Assign Normalized Ward</label>
+                                <select class="select-ward-norm" required>
+                                    ${wardOptions}
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Verify Sector Category</label>
+                                <select class="select-sector-norm" required>
+                                    ${sectorOptions}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="review-actions">
+                        <button type="button" class="btn-primary btn-save-manual" data-id="${ticket.ticket_id}">Save & Approve</button>
+                    </div>
+                `;
+
+                card.querySelector('.btn-save-manual').addEventListener('click', () => {
+                    const wardVal = card.querySelector('.select-ward-norm').value;
+                    const sectorVal = card.querySelector('.select-sector-norm').value;
+                    resolveManual(ticket.ticket_id, wardVal, sectorVal);
+                });
+            }
+
+            listContainer.appendChild(card);
+        });
+
+    } catch (err) {
+        listContainer.innerHTML = `<div class="placeholder-state error-state"><h3>Failed to Load Review Queue</h3><p>${err.message}</p></div>`;
+    }
+}
+
+async function resolveDuplicate(ticketId, action) {
+    try {
+        const res = await fetch(`/api/tickets/${ticketId}/resolve-duplicate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        if (!res.ok) throw new Error("Action failed");
+        
+        loadReviewQueue();
+        loadDashboardMetrics();
+    } catch (e) {
+        alert("Failed to resolve duplicate: " + e.message);
+    }
+}
+
+async function resolveManual(ticketId, wardNormalized, sector) {
+    if (!wardNormalized) {
+        alert("Please select a normalized ward to resolve this complaint.");
+        return;
+    }
+    try {
+        const res = await fetch(`/api/tickets/${ticketId}/resolve-manual`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ward_normalized: wardNormalized, sector })
+        });
+        if (!res.ok) throw new Error("Action failed");
+        
+        loadReviewQueue();
+        loadDashboardMetrics();
+    } catch (e) {
+        alert("Failed to save normalization: " + e.message);
+    }
+}
+
+function escapeHTML(str) {
+    if (!str) return '';
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}

@@ -1,0 +1,15 @@
+{
+  "name": "citizen-call-intel-backend",
+  "version": "1.0.0",
+  "description": "Backend layer for Citizen Call Intelligence featuring duplicate detection and heatmaps",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "mongodb": "^6.13.0"
+  }
+}
