@@ -187,7 +187,7 @@ export interface Transcript {
 // AI INSIGHTS TYPES
 // ----------------------------------------------------------
 
-export type SentimentLabel = 'positive' | 'neutral' | 'negative' | 'frustrated' | 'urgent';
+export type SentimentLabel = 'positive' | 'neutral' | 'negative' | 'frustrated' | 'urgent' | 'fearful';
 
 export interface Entity {
   text: string;
@@ -228,6 +228,60 @@ export interface AIInsights {
   detectedLanguage?: string;
   modelVersion: string;
   processedAt: string;
+}
+
+export interface VoicePipelineOutput {
+  detected_language: string;
+  language_name: string;
+  original_transcript: string;
+  translated_text: string;
+  title: string;
+  summary: string;
+  important_keywords: string[];
+  category: ComplaintCategory;
+  sub_category?: string;
+  severity_score: number;
+  severity_rationale: string;
+  is_emergency: boolean;
+  priority: ComplaintPriority;
+  sentiment: SentimentLabel;
+  urgency_score: number;
+  risk_score: number;
+  risk_level: 'low' | 'moderate' | 'high' | 'critical';
+  risk_breakdown?: {
+    safety_risk: number;
+    population_impact: number;
+    duration_factor: number;
+    vulnerability: number;
+    summary: string;
+  };
+  resolution_plan?: {
+    field_squad: string;
+    required_equipment: string[];
+    resolution_steps: string[];
+    estimated_cost_tier: 'Low (<₹5k)' | 'Medium (₹5k–₹25k)' | 'High (>₹25k)';
+    target_completion: string;
+  };
+  recommended_department: string;
+  department_code: string;
+  department_full_name: string;
+  department_routing_rationale?: string;
+  sla_hours: number;
+  entities: {
+    locations: string[];
+    ward?: string | null;
+    district?: string | null;
+    people_affected?: number | null;
+    duration_mentioned?: string | null;
+  };
+  suggested_actions: {
+    action: string;
+    priority: string;
+    estimated_days: number;
+  }[];
+  confidence: number;
+  processing_ms?: number;
+  mode?: string;
 }
 
 // ----------------------------------------------------------
