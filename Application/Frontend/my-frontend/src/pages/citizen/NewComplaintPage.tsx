@@ -154,7 +154,7 @@ function getSpeechRecognition(): ISpeechRecognitionCtor | null {
 // ─────────────────────────────────────────────
 
 interface AudioRecorderProps {
-  onTranscribed: (transcript: string, language: string) => void
+  onTranscribed: (transcript: string, language: string, blob?: Blob) => void
   onAudioReady:  (blob: Blob) => void
   onClear:       () => void
   isProcessing:  boolean
@@ -180,7 +180,9 @@ function AudioRecorder({ onTranscribed, onAudioReady, onClear, isProcessing }: A
   const analyserRef      = useRef<AnalyserNode | null>(null)
   const streamRef        = useRef<MediaStream | null>(null)
   const finalTextRef     = useRef('')
+  const liveTextRef      = useRef('')
   const audioCtxRef      = useRef<AudioContext | null>(null)
+  const lastBlobRef      = useRef<Blob | null>(null)
 
   useEffect(() => {
     if (!getSpeechRecognition()) setApiSupported(false)
@@ -215,10 +217,6 @@ function AudioRecorder({ onTranscribed, onAudioReady, onClear, isProcessing }: A
 
   const startRecording = async () => {
     const SpeechRecognitionCtor = getSpeechRecognition()
-    if (!SpeechRecognitionCtor) {
-      toast.error('Your browser does not support Web Speech API. Use Chrome/Edge or click a test preset below.')
-      return
-    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -241,43 +239,51 @@ function AudioRecorder({ onTranscribed, onAudioReady, onClear, isProcessing }: A
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
         const url  = URL.createObjectURL(blob)
         setAudioUrl(url)
+        lastBlobRef.current = blob
         onAudioReady(blob)
         if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
         setBars(Array(36).fill(4))
+
+        // Trigger AI analysis with audio blob + captured text
+        const completeSpeech = (finalTextRef.current + ' ' + liveTextRef.current).trim()
+        onTranscribed(completeSpeech, selectedLang, blob)
       }
       mr.start()
 
-      const recognition = new (SpeechRecognitionCtor as ISpeechRecognitionCtor)()
-      recognitionRef.current = recognition
-      recognition.lang = selectedLang
-      recognition.continuous = true
-      recognition.interimResults = true
-
       finalTextRef.current = ''
+      liveTextRef.current = ''
       setFinalText('')
       setLiveText('')
 
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        let interim = ''
-        let finalChunk = ''
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const t = event.results[i][0].transcript
-          if (event.results[i].isFinal) { finalChunk += t + ' ' }
-          else                          { interim     += t        }
-        }
-        if (finalChunk) {
-          finalTextRef.current += finalChunk
-          setFinalText(finalTextRef.current)
-        }
-        setLiveText(interim)
-      }
+      if (SpeechRecognitionCtor) {
+        const recognition = new (SpeechRecognitionCtor as ISpeechRecognitionCtor)()
+        recognitionRef.current = recognition
+        recognition.lang = selectedLang
+        recognition.continuous = true
+        recognition.interimResults = true
 
-      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        if (event.error === 'no-speech' || event.error === 'aborted') return
-        toast.error(`Speech recognition: ${event.error}`)
-      }
+        recognition.onresult = (event: SpeechRecognitionEvent) => {
+          let interim = ''
+          let finalChunk = ''
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const t = event.results[i][0].transcript
+            if (event.results[i].isFinal) { finalChunk += t + ' ' }
+            else                          { interim     += t        }
+          }
+          if (finalChunk) {
+            finalTextRef.current += finalChunk
+            setFinalText(finalTextRef.current)
+          }
+          liveTextRef.current = interim
+          setLiveText(interim)
+        }
 
-      recognition.start()
+        recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+          if (event.error === 'no-speech' || event.error === 'aborted') return
+        }
+
+        try { recognition.start() } catch {}
+      }
 
       setRecordingState('recording')
       setElapsed(0)
@@ -320,9 +326,10 @@ function AudioRecorder({ onTranscribed, onAudioReady, onClear, isProcessing }: A
           finalTextRef.current += finalChunk
           setFinalText(finalTextRef.current)
         }
+        liveTextRef.current = interim
         setLiveText(interim)
       }
-      recognition.start()
+      try { recognition.start() } catch {}
     }
 
     timerRef.current = setInterval(() => setElapsed(p => p + 1), 1000)
@@ -334,14 +341,7 @@ function AudioRecorder({ onTranscribed, onAudioReady, onClear, isProcessing }: A
     try { recognitionRef.current?.stop() } catch {}
     if (timerRef.current)     clearInterval(timerRef.current)
     if (streamRef.current)    streamRef.current.getTracks().forEach(t => t.stop())
-    setLiveText('')
     setRecordingState('done')
-
-    // Automatically trigger translation, summarization and auto-filling
-    const text = finalTextRef.current.trim()
-    if (text) {
-      onTranscribed(text, selectedLang)
-    }
   }
 
   const clearRecording = () => {
@@ -353,6 +353,7 @@ function AudioRecorder({ onTranscribed, onAudioReady, onClear, isProcessing }: A
     setLiveText('')
     setFinalText('')
     finalTextRef.current = ''
+    liveTextRef.current = ''
     chunksRef.current = []
     if (audioRef.current) audioRef.current.pause()
     onClear()
@@ -597,16 +598,16 @@ export default function NewComplaintPage() {
     }
   }
 
-  const handleAudioTranscribed = (transcript: string, language: string) => {
-    runVoiceIntelligence(transcript, language)
+  const handleAudioTranscribed = (transcript: string, language: string, blob?: Blob) => {
+    runVoiceIntelligence(transcript, language, blob)
   }
 
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     setAudioBlob(file)
-    toast.info(`Audio file "${file.name}" received. Agent is extracting & auto-filling…`)
-    await runVoiceIntelligence(file.name.replace(/\.[^/.]+$/, ''), 'en-IN', file)
+    toast.info(`Audio file "${file.name}" received. AI Agent is transcribing & analyzing…`)
+    await runVoiceIntelligence('', 'ta-IN', file)
   }
 
   const handleSelectPreset = (preset: typeof DEMO_VOICE_PRESETS[0]) => {
