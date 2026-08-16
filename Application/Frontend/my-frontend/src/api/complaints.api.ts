@@ -88,25 +88,88 @@ async function callAgent(
     detected_language:   detectedLanguage   ?? 'en',
   }
 
-  const res = await fetch(`${AGENT_BASE}/process`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
-  })
+  try {
+    const res = await fetch(`${AGENT_BASE}/process`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    })
 
-  if (!res.ok) {
-    const err = await res.text().catch(() => res.statusText)
-    throw new Error(`Agent error (${res.status}): ${err}`)
+    if (res.ok) {
+      const data = await res.json()
+      // Convert agent response to Complaint shape
+      return rowToComplaint({
+        ...data,
+        reference_number:     data.reference_number,
+        department_name:      data.department_name,
+        assigned_officer_name: data.assigned_officer_name,
+      } as Record<string, unknown>)
+    } else {
+      console.warn(`[complaints.api] Agent process returned status ${res.status}, falling back to mock mode.`)
+    }
+  } catch (err) {
+    console.warn('[complaints.api] Backend agent process offline, generating mock complaint:', err)
   }
 
-  const data = await res.json()
-  // Convert agent response to Complaint shape
-  return rowToComplaint({
-    ...data,
-    reference_number:     data.reference_number,
-    department_name:      data.department_name,
-    assigned_officer_name: data.assigned_officer_name,
-  } as Record<string, unknown>)
+  // ─── FALLBACK MOCK COMPLAINT (Agent Offline) ───
+  const refNum = `GRV-2026-${Math.floor(10000 + Math.random() * 90000)}`
+  const mockId = `c_mock_${Date.now()}`
+  
+  const depts: Record<string, string> = {
+    water_supply: 'Water Supply',
+    electricity: 'Electricity Board',
+    roads: 'Public Works',
+    sanitation: 'Sanitation',
+    public_safety: 'Public Safety',
+    healthcare: 'Health Department',
+    noise: 'Noise & Environment',
+    encroachment: 'Encroachment & Land',
+    taxation: 'Revenue & Taxation',
+    other: 'General Administration',
+  }
+
+  const mockComplaint: Complaint = {
+    id: mockId,
+    referenceNumber: refNum,
+    citizenId: citizenId || 'anonymous',
+    citizenName: citizenName || 'Anonymous Citizen',
+    citizenPhone,
+    title: form.title || 'Municipal Issue',
+    description: form.description || 'No description provided.',
+    category: form.category || 'other',
+    subCategory: form.subCategory,
+    status: 'submitted',
+    priority: 'medium',
+    department: depts[form.category] || 'General Administration',
+    assignedOfficerName: 'Field Inspection Desk',
+    location: {
+      address: form.address || 'Main Road Area',
+      ward: form.ward || 'Ward 12',
+      district: form.district || 'Central',
+      pincode: form.pincode || undefined,
+    },
+    attachments: [],
+    timeline: [
+      {
+        id: `t_mock_1_${Date.now()}`,
+        status: 'submitted',
+        note: 'Grievance registered in system (Offline Fallback Mode)',
+        updatedBy: citizenName || 'Anonymous Citizen',
+        updatedAt: new Date().toISOString(),
+      }
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+
+  try {
+    const { MOCK_COMPLAINTS } = await import('@/mock/data')
+    MOCK_COMPLAINTS.unshift(mockComplaint)
+  } catch (e) {
+    console.error('Failed to update MOCK_COMPLAINTS list:', e)
+  }
+
+  return mockComplaint
 }
 
 // ──────────────────────────────────────────────────────────────
